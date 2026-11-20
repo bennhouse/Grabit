@@ -149,7 +149,7 @@ struct HomeView: View {
 
     private var content: some View {
         VStack(alignment: .center, spacing: 14) {
-            PlatformIcon(platform: model.platform, size: 52)
+            PlatformIcon(platform: model.platform, size: 52, style: .secondary)
                 .frame(maxWidth: .infinity)
             Text(model.platform.canSearch ? "Search \(model.platform.name) or paste a link" : model.platform.searchPrompt)
                 .font(.title2.weight(.semibold))

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3
+
+- The services' logos in one colour, like the system symbols: the text colour in the site menu (white on the highlighted item), grey on the start screen. They follow Light and Dark Mode.
+
 ## 1.2
 
 - Icon in the suite's colours: coral, with a light play button and arrow.

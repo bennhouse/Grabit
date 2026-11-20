@@ -47,24 +47,6 @@ enum Platform: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Brand colour; nil for the black logos, drawn in the text colour so they show in Dark Mode.
-    var brandColor: NSColor? {
-        func hex(_ v: Int) -> NSColor {
-            NSColor(srgbRed: CGFloat(v >> 16 & 255) / 255, green: CGFloat(v >> 8 & 255) / 255, blue: CGFloat(v & 255) / 255, alpha: 1)
-        }
-        switch self {
-        case .youtube, .youtubeMusic: return hex(0xFF0000)
-        case .soundcloud: return hex(0xFF5500)
-        case .vimeo: return hex(0x1AB7EA)
-        case .instagram: return hex(0xFF0069)
-        case .facebook: return hex(0x0866FF)
-        case .twitch: return hex(0x9146FF)
-        case .reddit: return hex(0xFF4500)
-        case .bilibili: return hex(0x00A1D6)
-        case .tiktok, .x, .dailymotion, .other: return nil
-        }
-    }
-
     var symbol: String {
         switch self {
         case .youtube: "play.rectangle.fill"

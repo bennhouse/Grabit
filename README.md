@@ -6,7 +6,7 @@ Grabit downloads videos and audio from YouTube and the other sites yt-dlp suppor
 
 ## How it works
 
-1. **Top bar** (left): back, the site menu with each service's own logo (YouTube at every launch), and the search field for a title or a link. A link works whatever site is selected; the menu follows it.
+1. **Top bar** (left): back, the site menu with each service's own logo, in one colour like the system symbols (YouTube at every launch), and the search field for a title or a link. A link works whatever site is selected; the menu follows it.
    - Search: YouTube, YouTube Music, SoundCloud.
    - Links only: Vimeo, TikTok, Instagram, X, Facebook, Twitch, Reddit, Dailymotion, Bilibili and any other site yt-dlp knows (about 1,800). Some need a signed-in account and fail without one.
    - You can also drop a link on the window. A playlist or channel link opens as a list.
@@ -40,7 +40,7 @@ Files go to Downloads (changeable on the video screen). An existing file is neve
 | yt-dlp 2026.10.26 (macOS onedir build) | github.com/yt-dlp/yt-dlp | reading sites, downloading | Unlicense |
 | ffmpeg 9.0.2 (static, arm64) | ffmpeg.martin-riedl.de | merging, audio and HEVC conversion | GPL |
 | deno 2.9.8 | github.com/denoland/deno | JavaScript runtime yt-dlp needs for YouTube | MIT |
-| service logos (Resources/icons) | simple-icons.org 16.38.0 | site menu | CC0 (the logos are their owners' trademarks) |
+| service logos (Resources/icons) | simple-icons.org 16.38.0 | site menu, drawn in one colour | CC0 (the logos are their owners' trademarks) |
 
 The ffmpeg binary is distributed unchanged under the GPL; its source is at https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz and the build scripts at https://git.martin-riedl.de/ffmpeg/build-script.
 
