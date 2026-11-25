@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 enum CLI {
     static func run(_ a: [String]) async {
+        setvbuf(stdout, nil, _IONBF, 0)
         func value(_ flag: String) -> String? { a.firstIndex(of: flag).flatMap { a.indices.contains($0 + 1) ? a[$0 + 1] : nil } }
         do {
             switch a[0] {
@@ -56,6 +57,7 @@ enum CLI {
                     m.enqueue(DownloadRequest(info: info, audioOnly: false, video: info.videoOptions.first { $0.label == 720 } ?? info.videoOptions.first,
                                               audio: Defaults.audio(info, preferAAC: true), container: .mp4Compatible, audioOutput: .aac, folder: out))
                 }
+                m.play()   // adding never starts the queue
                 var paused = false
                 var last = ""
                 while m.items.contains(where: { !$0.isDone }) {
@@ -71,6 +73,38 @@ enum CLI {
                     }
                 }
                 for i in m.items { print("END \(i.title.prefix(20)): \(i.statusText)") }
+            case "--queue-controls":
+                // Adding doesn't start; Play, Pause (process frozen), Play, Stop (back in the queue,
+                // nothing restarts), Play to the end.
+                let out = URL(fileURLWithPath: value("--out") ?? FileManager.default.currentDirectoryPath)
+                let m = DownloadManager.shared
+                for url in a.dropFirst().filter({ $0.hasPrefix("http") }) {
+                    guard case .video(let info) = try await YTDLP.lookup(url) else { continue }
+                    m.enqueue(DownloadRequest(info: info, audioOnly: false, video: info.videoOptions.first { $0.label == 360 } ?? info.videoOptions.last,
+                                              audio: Defaults.audio(info, preferAAC: true), container: .mp4Compatible, audioOutput: .aac, folder: out))
+                }
+                func show(_ s: String) { print(s + " | state=\(m.queueState) | " + m.items.map { "[\($0.title.prefix(10)): \($0.statusText)]" }.joined(separator: " ")) }
+                func psState() -> String {
+                    let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/ps")
+                    p.arguments = ["-A", "-o", "ppid=,stat=,comm="]
+                    let pipe = Pipe(); p.standardOutput = pipe; try? p.run(); p.waitUntilExit()
+                    return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                        .split(separator: "\n").filter { ($0.contains("yt-dlp") || $0.contains("ffmpeg")) && !$0.contains("grep") }.joined(separator: "; ")
+                }
+                try await Task.sleep(for: .seconds(2))
+                show("after adding, 2 s")
+                m.play(); show("play")
+                while !(m.items.first?.state == .downloading && (m.items.first?.fraction ?? 0) > 0.02) { try await Task.sleep(for: .milliseconds(100)) }
+                m.pause(); try await Task.sleep(for: .milliseconds(500))
+                let f1 = m.items.first!.fraction
+                show("pause"); print("  processes: \(psState())")
+                try await Task.sleep(for: .seconds(2))
+                print("  fraction before/after 2 s paused: \(f1) \(m.items.first!.fraction)")
+                m.play(); try await Task.sleep(for: .seconds(1)); show("play again"); print("  processes: \(psState())")
+                m.stop(); try await Task.sleep(for: .seconds(3)); show("stop + 3 s"); print("  processes: [\(psState())]")
+                m.play(); show("play to the end")
+                while m.items.contains(where: { !$0.isDone }) { try await Task.sleep(for: .milliseconds(500)) }
+                show("end")
             default: break
             }
         } catch {

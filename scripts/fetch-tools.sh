@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-YTDLP_VERSION="2026.10.26"
+YTDLP_VERSION="2026.11.23"
 FFMPEG_PATH="macos/arm64/1789931890_9.0.2"
 DENO_VERSION="v2.9.8"
 

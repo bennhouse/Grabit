@@ -3,6 +3,11 @@ import SwiftUI
 /// Right sidebar: what is downloading, what waits in the queue, what is finished.
 struct QueueSidebar: View {
     private var manager = DownloadManager.shared
+    /// Section titles start this far from the left edge (and Clear ends this far from the right one).
+    private let headerInset: CGFloat = 14
+    /// Rows start this far from either edge.
+    private let rowInset: CGFloat = 16
+    private let sectionGap: CGFloat = 13
     @AppStorage("downloadFolder") private var folderPath: String = Defaults.downloadFolder.path
 
     var body: some View {
@@ -20,44 +25,34 @@ struct QueueSidebar: View {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
-                    if !manager.active.isEmpty {
-                        Section("Downloading") {
-                            ForEach(manager.active) { QueueRow(item: $0) }
+                // A plain stack rather than a List: the List's table re-measured every row the
+                // first time the queue opened, which cost a few frames of the animation. It looks
+                // like the sidebar list it replaces (same insets, section titles that don't fold).
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !manager.active.isEmpty {
+                            header("Downloading")
+                            rows(manager.active)
                         }
-                    }
-                    if !manager.queued.isEmpty {
-                        Section {
-                            ForEach(manager.queued) { QueueRow(item: $0) }
-                        } header: {
-                            HStack {
-                                Text("Queue · \(manager.queued.count)")
-                                Spacer()
-                                Button { manager.queuePaused.toggle() } label: {
-                                    Image(systemName: manager.queuePaused ? "play.fill" : "pause.fill")
-                                }
-                                .buttonStyle(.borderless)
-                                .controlSize(.small)
-                                .help(manager.queuePaused ? "Resume the queue" : "Pause the queue (the current download finishes)")
-                            }
+                        if !manager.queued.isEmpty {
+                            header("Queue · \(manager.queued.count)")
+                                .padding(.top, manager.active.isEmpty ? 0 : sectionGap)
+                            rows(manager.queued)
                         }
-                    }
-                    if !manager.done.isEmpty {
-                        Section {
-                            ForEach(manager.done) { QueueRow(item: $0) }
-                        } header: {
-                            HStack {
-                                Text("Finished")
-                                Spacer()
+                        if !manager.done.isEmpty {
+                            header("Finished") {
                                 Button("Clear") { manager.clearFinished() }
                                     .buttonStyle(.borderless)
                                     .controlSize(.small)
-                                    .help("Remove finished downloads from the list (the files stay)")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .tip("Remove finished downloads from the list (the files stay)")
                             }
+                            .padding(.top, manager.active.isEmpty && manager.queued.isEmpty ? 0 : sectionGap)
+                            rows(manager.done)
                         }
                     }
+                    .padding(.vertical, 10)
                 }
-                .listStyle(.sidebar)
             }
             Divider()
             HStack(spacing: 6) {
@@ -72,8 +67,65 @@ struct QueueSidebar: View {
             }
             .font(.callout)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            // As high as the page's status bar, so the two lines meet.
+            .frame(height: StatusBarMetrics.height - 1)
         }
+    }
+}
+
+extension QueueSidebar {
+    /// A section title: small, bold and grey like a sidebar's.
+    private func header(_ title: String, @ViewBuilder trailing: () -> some View = { EmptyView() }) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.tertiary)
+            Spacer()
+            trailing().foregroundStyle(.secondary)
+        }
+        .font(.system(size: 11, weight: .bold))
+        .frame(height: 19)
+        .padding(.horizontal, headerInset)
+    }
+
+    private func rows(_ items: [DownloadItem]) -> some View {
+        ForEach(items) { item in
+            QueueRow(item: item)
+                .padding(.horizontal, rowInset)
+                .padding(.vertical, 4)
+        }
+    }
+}
+
+/// Stop, Pause and Play for the queue, in the top bar over the queue (only while it is open).
+struct QueueControls: View {
+    @Environment(AppModel.self) private var model
+    private var manager = DownloadManager.shared
+
+    var body: some View {
+        // Spaced like separate toolbar buttons (as the queue button next to them). Always in the
+        // toolbar (adding them when the queue opens cost a few frames of its animation), but no
+        // wider than nothing while the queue is closed, so a narrow window keeps the queue button.
+        HStack(spacing: 1) {
+            button("stop.fill", "Stop", "Stop the queue: the current download starts again from the beginning with Play",
+                   enabled: manager.canStop) { manager.stop() }
+            button("pause.fill", "Pause", "Pause the queue and its current download", enabled: manager.canPause) { manager.pause() }
+            button("play.fill", "Play", manager.queueState == .paused ? "Resume the queue" : "Start the queue: one download at a time",
+                   enabled: manager.canPlay) { manager.play() }
+        }
+        .fixedSize()
+        .frame(width: model.showQueue ? nil : 0, alignment: .trailing)
+        .clipped()
+        .opacity(model.showQueue ? 1 : 0)
+        .allowsHitTesting(model.showQueue)
+        .accessibilityHidden(!model.showQueue)
+    }
+
+    private func button(_ symbol: String, _ title: String, _ help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 26, height: 22)
+        }
+        .disabled(!enabled)
+        .help(help)
+        .accessibilityLabel(title)
     }
 }
 
@@ -164,7 +216,36 @@ struct QueueRow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .help(help)
+        .tip(help)
         .accessibilityLabel(help)
+    }
+}
+
+// MARK: - Tooltips
+
+extension View {
+    /// A tooltip for a view that can disappear under the mouse (a row's buttons, the progress ring,
+    /// Clear). SwiftUI's own `.help` crashed then (its tooltip tracking read the removed view); an
+    /// AppKit tooltip goes away with its view.
+    func tip(_ text: String) -> some View {
+        overlay(TooltipView(text: text).allowsHitTesting(false))
+    }
+}
+
+private struct TooltipView: NSViewRepresentable {
+    let text: String
+
+    final class View: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }   // clicks go to the button
+    }
+
+    func makeNSView(context: Context) -> View {
+        let v = View()
+        v.toolTip = text
+        return v
+    }
+
+    func updateNSView(_ v: View, context: Context) {
+        if v.toolTip != text { v.toolTip = text }
     }
 }

@@ -19,7 +19,15 @@ final class AppModel {
     var results: [SearchResult] = []
     var resultsTitle = ""
     var video: VideoInfo?
-    var showQueue = true
+    /// The queue sidebar opens when something is added to the queue (or with its button), not for
+    /// a direct download, whose progress shows on its Download button.
+    var showQueue = false
+    /// While the window grows to make room for the queue: how much the page may shrink meanwhile.
+    var queueRoomShortfall: Double = 0
+    /// While the window grows for the queue: how much of the queue shows (0…1).
+    var queueReveal: Double?
+    /// Width of the page (left of the queue), for the search field to fit a narrow window.
+    var pageWidth: Double = 980
     var focusSearch = 0          // bumped to move the keyboard focus to the search field
 
     static let pageSize = 24
@@ -39,6 +47,24 @@ final class AppModel {
     }
 
     // MARK: Actions
+
+    /// Opens or closes the download queue sidebar.
+    func toggleQueue() {
+        let missing = showQueue ? 0 : MainWindow.shortfall(for: UserDefaults.standard.object(forKey: "queueWidth") as? Double ?? 280)
+        guard missing > 0 else {
+            withAnimation(.smooth(duration: 0.3)) { showQueue.toggle() }
+            return
+        }
+        // A narrow window widens along with the queue (same curve, same length).
+        // The queue's width follows the window's, frame by frame, so the page keeps its 600 pt.
+        queueRoomShortfall = missing
+        queueReveal = 0
+        showQueue = true
+        MainWindow.grow(by: missing, duration: 0.3, step: { [weak self] e in self?.queueReveal = e }) { [weak self] in
+            self?.queueReveal = nil
+            self?.queueRoomShortfall = 0
+        }
+    }
 
     func submit() {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -7,9 +7,9 @@ enum VideoContainer: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .mp4Compatible: "MP4 · plays everywhere"
-        case .mp4: "MP4 · original codecs"
-        case .mkv: "MKV · original codecs"
+        case .mp4Compatible: "MP4 · H.264"
+        case .mp4: "MP4 · VP9 (original)"
+        case .mkv: "MKV · VP9 (original)"
         }
     }
 }
@@ -179,6 +179,8 @@ final class DownloadItem: Identifiable {
     var speed: String?
     var eta: String?
     var isPaused = false
+    /// Grabit cuts or converts after the download (the ring keeps a share for that step).
+    let convertsAfter: Bool
 
     @ObservationIgnored fileprivate var process: Process?
     @ObservationIgnored fileprivate var cancelRequested = false
@@ -190,6 +192,21 @@ final class DownloadItem: Identifiable {
         self.detail = detail
         self.thumbnail = request.info.thumbnail
         self.state = fromQueue ? .queued : .waiting
+        self.convertsAfter = DownloadPlan(request).postProcess
+    }
+
+    /// Progress of the whole job for the progress ring, never going back: the download, then
+    /// Grabit's own conversion. nil while there is no percentage yet.
+    var ringFraction: Double? {
+        let split = convertsAfter ? 0.8 : 1.0
+        switch state {
+        case .waiting, .queued: return nil
+        case .downloading: return fraction * split
+        case .processing: return split
+        case .converting: return split + fraction * (1 - split)
+        case .finished: return 1
+        case .failed, .cancelled: return nil
+        }
     }
 
     var isActive: Bool {
@@ -224,31 +241,66 @@ final class DownloadItem: Identifiable {
 final class DownloadManager {
     static let shared = DownloadManager()
     var items: [DownloadItem] = []
-    /// The queue downloads one item at a time; this stops it from starting the next one.
-    var queuePaused = false {
-        didSet { if !queuePaused { pump() } }
-    }
+
+    /// The queue only runs when started with Play: adding an item never starts it. It downloads one
+    /// item at a time and goes back to stopped when it has nothing left.
+    enum QueueState { case stopped, running, paused }
+    private(set) var queueState: QueueState = .stopped
 
     var active: [DownloadItem] { items.filter(\.isActive) }
     var queued: [DownloadItem] { items.filter(\.isQueued) }
     var done: [DownloadItem] { items.filter(\.isDone).reversed() }
     var pendingCount: Int { active.count + queued.count }
+    /// The queue item being downloaded (paused or not).
+    var queueCurrent: DownloadItem? { items.first { $0.fromQueue && $0.isActive } }
 
-    func start(_ r: DownloadRequest) {
+    var canPlay: Bool { queueState != .running && (queueCurrent != nil || !queued.isEmpty) }
+    var canPause: Bool { queueState == .running && queueCurrent != nil }
+    var canStop: Bool { queueState != .stopped || queueCurrent != nil }
+
+    /// Downloads right away, outside the queue. Returns the item, to follow its progress.
+    @discardableResult
+    func start(_ r: DownloadRequest) -> DownloadItem {
         let item = DownloadItem(request: r, fromQueue: false, detail: Self.describe(r))
         items.append(item)
-        Task { await run(item) }
+        Task {
+            if let secs = Snapshots.fakeDownload { await fakeRun(item, seconds: secs) } else { await run(item) }
+        }
+        return item
     }
 
+    /// Adds to the queue without starting it.
     func enqueue(_ r: DownloadRequest) {
         items.append(DownloadItem(request: r, fromQueue: true, detail: Self.describe(r)))
+    }
+
+    /// Starts the queue, or resumes it (and its current download) after Pause.
+    func play() {
+        if let c = queueCurrent, c.isPaused { togglePause(c) }
+        queueState = .running
         pump()
     }
 
-    /// Starts the next queued item when no queued item is running.
+    /// Freezes the current queue download; nothing else starts until Play.
+    func pause() {
+        guard queueState == .running else { return }
+        queueState = .paused
+        if let c = queueCurrent, !c.isPaused { togglePause(c) }
+    }
+
+    /// Stops the queue. The current download is stopped and goes back to the top of the queue, to
+    /// start again from the beginning with the next Play.
+    func stop() {
+        queueState = .stopped
+        guard let c = queueCurrent, let i = items.firstIndex(where: { $0.id == c.id }) else { return }
+        cancel(c)
+        items[i] = DownloadItem(request: c.request, fromQueue: true, detail: c.detail)
+    }
+
+    /// Starts the next queued item while the queue runs and none of its items is downloading.
     private func pump() {
-        guard !queuePaused, !items.contains(where: { $0.fromQueue && $0.isActive }),
-              let next = items.first(where: \.isQueued) else { return }
+        guard queueState == .running, queueCurrent == nil else { return }
+        guard let next = items.first(where: \.isQueued) else { queueState = .stopped; return }
         next.state = .waiting
         Task { await run(next) }
     }
@@ -269,6 +321,7 @@ final class DownloadManager {
 
     func cancel(_ item: DownloadItem) {
         if item.isQueued { remove(item); return }
+        let wasCurrent = item.fromQueue && item.isActive
         item.cancelRequested = true
         if let p = item.process, p.isRunning {
             if item.isPaused { send(p, SIGCONT) }
@@ -277,6 +330,12 @@ final class DownloadManager {
         }
         item.isPaused = false
         item.state = .cancelled
+        // Cancelling the queue's current download moves on to the next one while the queue runs;
+        // a paused queue with nothing left goes back to stopped.
+        if wasCurrent {
+            if queueState == .paused, queued.isEmpty { queueState = .stopped }
+            pump()
+        }
     }
 
     /// Pause freezes the running process (and the ffmpeg it started); resume lets it go on. yt-dlp
@@ -285,6 +344,8 @@ final class DownloadManager {
         guard let p = item.process, p.isRunning else { return }
         item.isPaused.toggle()
         send(p, item.isPaused ? SIGSTOP : SIGCONT)
+        // The queue's current download and the queue pause and resume together.
+        if item.fromQueue, queueState != .stopped { queueState = item.isPaused ? .paused : .running }
     }
 
     func retry(_ item: DownloadItem) {
@@ -292,7 +353,10 @@ final class DownloadManager {
         if item.fromQueue { enqueue(item.request) } else { start(item.request) }
     }
 
-    func remove(_ item: DownloadItem) { items.removeAll { $0.id == item.id } }
+    func remove(_ item: DownloadItem) {
+        items.removeAll { $0.id == item.id }
+        if queueState == .paused, queueCurrent == nil, queued.isEmpty { queueState = .stopped }
+    }
     func clearFinished() { items.removeAll(where: \.isDone) }
 
     private func send(_ p: Process, _ sig: Int32) {
@@ -305,6 +369,23 @@ final class DownloadManager {
     }
 
     // MARK: Running
+
+    /// GRABIT_FAKE_DOWNLOAD: the states of a download without the network, for the screenshots.
+    private func fakeRun(_ item: DownloadItem, seconds: Double) async {
+        item.state = .waiting
+        try? await Task.sleep(for: .seconds(0.8))
+        item.state = .downloading
+        let steps = Int(seconds * 10)
+        for i in 1...max(1, steps) {
+            if item.cancelRequested { return }
+            item.fraction = Double(i) / Double(max(1, steps))
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        item.state = .processing("Merging video and audio…")
+        try? await Task.sleep(for: .seconds(0.8))
+        if item.cancelRequested { return }
+        item.state = .finished(item.request.folder)
+    }
 
     private func run(_ item: DownloadItem) async {
         defer {
@@ -319,7 +400,7 @@ final class DownloadManager {
         // Intermediate files (streams before merging or converting) stay in a folder of their own;
         // when Grabit cuts or converts, yt-dlp's whole output stays there.
         let home = plan.postProcess ? temp.appendingPathComponent("out").path : r.folder.path
-        let args = Tools.commonArgs + plan.args + [
+        let base = Tools.commonArgs + plan.args + [
             "--no-playlist", "--newline", "--progress", "--no-mtime",
             "--retries", "20", "--fragment-retries", "20", "--socket-timeout", "30",
             "--progress-template", "download:GBPROG %(info.format_id)s %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s",
@@ -332,7 +413,18 @@ final class DownloadManager {
         var stderrTail: [String] = []
         item.state = .downloading
 
-        let status = await stream(Tools.ytdlp, args, item: item) { line in
+        // YouTube sometimes refuses a stream's signed address ("HTTP Error 403: Forbidden"), which
+        // yt-dlp doesn't retry. A new run fetches fresh addresses and resumes the partial files
+        // (they stay in this item's temp folder), so Grabit tries up to three times.
+        var status: Int32 = 0
+        // Over IPv4: some of YouTube's servers didn't answer over IPv6 on this network, and a 4K
+        // download sat at 0% for minutes (yt-dlp prefers IPv6). Without IPv4, it falls back.
+        var ipv4 = true
+        for attempt in 1...3 {
+            file = nil
+            stderrTail = []
+            let args = (ipv4 ? ["--force-ipv4"] : []) + base
+            status = await stream(Tools.ytdlp, args, item: item) { line in
             if line.hasPrefix("GBPROG ") {
                 let p = line.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
                 guard p.count >= 7 else { return }
@@ -357,8 +449,17 @@ final class DownloadManager {
                 stderrTail.append(line)
                 if stderrTail.count > 30 { stderrTail.removeFirst() }
             }
+            }
+            if item.cancelRequested { item.state = .cancelled; return }
+            let noIPv4 = ipv4 && stderrTail.contains { $0.contains("Network is unreachable") || $0.contains("No route to host") || $0.contains("Errno 65") || $0.contains("Errno 51") }
+            if noIPv4 { ipv4 = false }
+            guard status != 0, attempt < 3, noIPv4 || stderrTail.contains(where: { $0.contains("HTTP Error 403") }) else { break }
+            item.state = .processing("The site refused the connection, trying again (\(attempt + 1) of 3)…")
+            item.speed = nil
+            item.eta = nil
+            try? await Task.sleep(for: .seconds(Double(attempt) * 2))
+            if item.cancelRequested { item.state = .cancelled; return }
         }
-        if item.cancelRequested { item.state = .cancelled; return }
         guard status == 0, let file else {
             item.state = .failed(ToolError.from(stderr: stderrTail.joined(separator: "\n"), status: status).message)
             return
@@ -500,7 +601,11 @@ final class DownloadManager {
                     Task { @MainActor in cont.resume(returning: p.terminationStatus) }
                 }
             }
-            do { try p.run() } catch {
+            do {
+                try p.run()
+                // Paused while the item was starting, or between yt-dlp and Grabit's ffmpeg step.
+                if item.fromQueue, queueState == .paused, !item.isPaused { togglePause(item) }
+            } catch {
                 out.fileHandleForReading.readabilityHandler = nil
                 err.fileHandleForReading.readabilityHandler = nil
                 cont.resume(returning: -1)

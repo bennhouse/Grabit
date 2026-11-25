@@ -64,7 +64,9 @@ enum Permissions {
     /// A banner when a download ends, if allowed. Not shown while Grabit is the active app.
     @MainActor
     static func notify(_ title: String, _ body: String) {
-        guard Bundle.main.bundleIdentifier != nil, !NSApp.isActive else { return }
+        // No application object in the command-line test modes.
+        let app: NSApplication? = NSApp
+        guard Bundle.main.bundleIdentifier != nil, let app, !app.isActive else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

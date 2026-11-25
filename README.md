@@ -27,7 +27,7 @@ Grabit downloads videos and audio from YouTube and the other sites yt-dlp suppor
    - Right: the title with two icon buttons, **Download Now** (↩) and **Add to Queue**, then the options: Video / Audio Only, resolution (only what the video really has, up to its maximum), audio quality (AAC streams), format, destination.
    - Video format *MP4 · plays everywhere* (default) is H.264 + AAC; above 1080p YouTube has only AV1/VP9, so Grabit converts to HEVC with the hardware encoder. *MP4 / MKV · original codecs* keeps what the site streams.
    - Audio: *AAC (.m4a)*, saved as streamed when the source is AAC, or *MP3*.
-4. **Download queue** (right sidebar, ⌥⌘J or the button at the top right): what is downloading, what waits in the queue, what is finished. Each row has small buttons: pause / resume and cancel while running, remove while queued, show in Finder when done, retry after a failure. The queue downloads one item at a time and can be paused; Download Now starts at once, alongside it.
+4. **Download queue** (right sidebar, ⌥⌘J or the button at the top right): what is downloading, what waits in the queue, what is finished. Each row has small buttons: pause / resume and cancel while running, remove while queued, show in Finder when done, retry after a failure. The queue downloads one item at a time: adding to it doesn't start it; **Stop**, **Pause** and **Play** at the right of its top bar run it (Stop puts the current download back at the top of the queue). It opens when something is added to it. Download Now starts at once, alongside the queue, without opening it: its button becomes a progress ring (click to stop).
 
 Files go to Downloads (changeable on the video screen). An existing file is never overwritten: the new one gets " 2", " 3"…
 
@@ -76,4 +76,5 @@ GRABIT_TOOLS=vendor/bin .build/debug/Grabit --search youtube "big buck bunny"
 GRABIT_TOOLS=vendor/bin .build/debug/Grabit --info URL
 GRABIT_TOOLS=vendor/bin .build/debug/Grabit --download URL [--res 2160] [--audio-only] [--audio-format aac|mp3] [--container mp4Compatible|mp4|mkv] [--section 65.5-80.25] [--out DIR]
 GRABIT_TOOLS=vendor/bin .build/debug/Grabit --queue-test URL URL [--out DIR]   # queue order and pause/resume
+build/Grabit.app/Contents/MacOS/Grabit --queue-controls URL URL [--out DIR]   # Play/Pause/Stop of the queue
 ```

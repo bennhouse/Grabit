@@ -29,10 +29,12 @@ struct YTFormat: Decodable {
     let language_preference: Double?
     let http_headers: [String: String]?
     let dynamic_range: String?
+    /// For HLS formats: the site's master playlist (on YouTube, every size with its audio groups).
+    let manifest_url: String?
 
     enum CodingKeys: String, CodingKey {
         case format_id, ext, vcodec, acodec, width, height, fps, tbr, abr, vbr, audio_channels, filesize,
-             filesize_approx, url, format_note, language, language_preference, http_headers, dynamic_range
+             filesize_approx, url, format_note, language, language_preference, http_headers, dynamic_range, manifest_url
         case proto = "protocol"
     }
 
@@ -258,6 +260,10 @@ enum FormatAnalysis {
         var source = audioOnly.isEmpty ? formats.filter { $0.hasAudio && $0.hasVideo } : audioOnly
         // Streams with an unknown codec (YouTube's immersive IAMF audio) can't be merged or converted reliably.
         if source.contains(where: { $0.acodec != nil }) { source = source.filter { $0.acodec != nil } }
+        // Only the original soundtrack: YouTube adds automatic dubs in other languages; yt-dlp marks
+        // the original ("original (default)") and ranks it above them.
+        let prefs = Set(source.map { $0.language_preference ?? 0 })
+        if let top = prefs.max(), prefs.count > 1 { source = source.filter { ($0.language_preference ?? 0) == top } }
         let languages = Set(source.compactMap(\.language))
         // Separate audio: best first. Audio inside videos: smallest video first, so "audio only"
         // fetches the lightest stream (on these sites every size usually carries the same audio).
@@ -291,6 +297,16 @@ enum FormatAnalysis {
             return (p.hasPrefix("http") && ["mp4", "mov", "m4v"].contains($0.ext ?? "")) || p.hasPrefix("m3u8")
         }
         var preview = playable.filter { ($0.height ?? 0) <= 720 }.last ?? playable.first
+        var previewURL = preview?.url.flatMap(URL.init(string:))
+        // No combined stream (some 4K/HDR YouTube videos only have separate video and audio): the
+        // site's HLS master playlist, which AVPlayer plays with its sound, picking the size itself.
+        // Without it the preview stayed on the cover.
+        if preview == nil, !video.isEmpty,
+           let hls = formats.first(where: { ($0.proto ?? "").hasPrefix("m3u8") && $0.hasVideo && $0.manifest_url != nil }),
+           let master = hls.manifest_url.flatMap(URL.init(string:)) {
+            preview = hls
+            previewURL = master
+        }
         // Music without video (SoundCloud): the player plays the audio stream, under the cover art.
         if preview == nil, video.isEmpty {
             preview = formats.filter { $0.hasAudio && $0.url != nil && (($0.proto ?? "").hasPrefix("m3u8") || ["m4a", "mp3", "mp4"].contains($0.ext ?? "")) }.last
@@ -306,7 +322,7 @@ enum FormatAnalysis {
             platform: Platform.detect(URL(string: page) ?? URL(string: "https://example.com")!),
             thumbnail: bestThumbnail(item), width: w, height: h,
             videoOptions: videoOptions, audioOptions: audio,
-            previewURL: preview?.url.flatMap(URL.init(string:)), previewHeaders: preview?.http_headers ?? [:],
+            previewURL: previewURL ?? preview?.url.flatMap(URL.init(string:)), previewHeaders: preview?.http_headers ?? [:],
             isLive: item.live_status == "is_live",
             fps: videoOptions.first.map { Double(max($0.fps, 1)) } ?? 30)
     }
@@ -340,6 +356,13 @@ enum Fmt {
         let whole = Int(t), cs = Int(((t - Double(whole)) * 100).rounded(.down))
         if whole >= 3600 { return String(format: "%d:%02d:%02d.%02d", whole / 3600, whole / 60 % 60, whole % 60, cs) }
         return String(format: "%d:%02d.%02d", whole / 60, whole % 60, cs)
+    }
+
+    /// Whole seconds only ("1:05", "1:02:05"), for narrow places.
+    static func clock(_ t: Double) -> String {
+        let s = Int(max(0, t))
+        if s >= 3600 { return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) }
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     static func bytes(_ b: Double?) -> String? {
