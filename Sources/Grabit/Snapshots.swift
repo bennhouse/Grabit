@@ -68,6 +68,13 @@ enum Snapshots {
             for c in o.accessibilityChildren() ?? [] { walk(c, depth + 1) }
         }
         for w in NSApp.windows where w.isVisible { walk(w, 0) }
+        for w in NSApp.windows where w.isVisible {
+            for item in w.toolbar?.items ?? [] {
+                guard let v = item.view, v.window != nil else { continue }
+                let r = v.convert(v.bounds, to: nil)
+                out += "toolbar item \(item.itemIdentifier.rawValue.suffix(30)) x=\(Int(r.minX))…\(Int(r.maxX)) window width \(Int(w.frame.width))\n"
+            }
+        }
         out += "\n--- views\n"
         func views(_ v: NSView, _ depth: Int) {
             var extra = ""

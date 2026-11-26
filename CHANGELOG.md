@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New icon, redrawn with the rest of the suite from one shared design (same glass parts, light, shadows and safe area on every icon).
 - No scroll bars in lists (the quality list kept changing width).
 - Download queue sidebar rebuilt: it opens and closes in one smooth movement together with the page (the system inspector slid over the page first and moved the page afterwards, with a hitch at the start). It can still be made wider by dragging its edge (250–380 pt).
 - The queue is translucent from top to bottom: its top bar and its bottom bar have the same material as the list. The rest of the window is unchanged.
